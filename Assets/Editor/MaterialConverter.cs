@@ -5,13 +5,14 @@ using UnityEngine;
 using System;
 
 public class LinesLiltoonToPoiyomi : EditorWindow {
+    private static List<Material> convertedMaterials = new List<Material>();
+    
     [MenuItem("Tools/Convert liltoon material to Poiyomi", false)]
     private static void ConvertMaterial() {
         if (Selection.objects.Length == 0) return;
 
-        // See if we have poi pro installed
         bool isPro = Shader.Find(".poiyomi/Poiyomi Pro") != null;
-        // If not, see if we have poi toon installed at all
+
         if (!isPro && Shader.Find(".poiyomi/Poiyomi Toon") == null) {
             EditorUtility.DisplayDialog("Convert liltoon to poiyomi", "Looks like you don't have Poiyomi Toon 9 or later installed, boo womp, please install it before running this script!", "OK");
             return;
@@ -21,7 +22,8 @@ public class LinesLiltoonToPoiyomi : EditorWindow {
         for (int i = 0; i < Selection.objects.Length; i++) {
             if (Selection.objects[i] is Material material) {
                 if (IsLiltoon(material)) {
-                    CreatePoiyomiMaterial(ref material, isPro);
+                    Material poi = CreatePoiyomiMaterial(material, isPro);
+                    convertedMaterials.Add(poi);
                 } else {
                     string path = AssetDatabase.GetAssetPath(material);
                     if (!string.IsNullOrEmpty(path)) unsupportedMaterials.Add(path);
@@ -30,22 +32,16 @@ public class LinesLiltoonToPoiyomi : EditorWindow {
             }
         }
         if (unsupportedMaterials.Count > 0) EditorUtility.DisplayDialog("Convert liltoon to poiyomi", "Skipped conversion of materials using unsupported shaders." + "\r\n" + string.Join("\r\n", unsupportedMaterials), "OK");
+        
+        ReplaceMaterialsInAllObjects(convertedMaterials);
         AssetDatabase.SaveAssets();
     }
-    /*
-    [MenuItem("Tools/Convert liltoon material to Poiyomi", true)]
-    private static bool CheckMaterialFormat() {
-        if (Selection.activeGameObject == null) return false;
-        return true; // AssetDatabase.GetAssetPath(Selection.activeObject).EndsWith(".mat", StringComparison.OrdinalIgnoreCase);
-    }
-    */
 
     private static bool IsLiltoon(Material material) {
         return material.shader.name.Contains("lilToon");
     }
 
-    private static void CreatePoiyomiMaterial(ref Material lil, bool isPro) {
-        // Check if we have poiyomi pro installed
+    private static Material CreatePoiyomiMaterial(Material lil, bool isPro) {
         string shaderName = isPro ? ".poiyomi/Poiyomi Pro" : ".poiyomi/Poiyomi Toon";
 
         if (lil.shader.name.Contains("TwoPass")) {
@@ -86,7 +82,7 @@ public class LinesLiltoonToPoiyomi : EditorWindow {
         poi.SetFloat("_LightingMapMode", 1); // Normalized NDotL
         poi.SetFloat("_LightingDirectionMode", 4); // OpenLit(lil toon)
 
-        poi.SetFloat("", lil.GetFloat(""));
+        // poi.SetFloat("", lil.GetFloat(""));
         poi.SetFloat("_LightingMonochromatic", lil.GetFloat("_MonochromeLighting"));
 
         poi.SetFloat("_LightingMinLightBrightness", lil.GetFloat("_LightMinLimit"));
@@ -444,7 +440,45 @@ public class LinesLiltoonToPoiyomi : EditorWindow {
         }
 
 
-        string newMaterialName = Path.GetDirectoryName(AssetDatabase.GetAssetPath(lil)) + "\\PoiConverted_" + lil.name + ".mat";
+        string newMaterialName = Path.GetDirectoryName(AssetDatabase.GetAssetPath(lil)) + "\\" + lil.name + "_poi.mat";
         AssetDatabase.CreateAsset(poi, newMaterialName);
+
+        return poi;
+    }
+
+    private static void ReplaceMaterialsInAllObjects(List<Material> convertedMaterials) {
+        if (convertedMaterials == null) {
+            Debug.LogError("convertedMaterials list is null.");
+            return;
+        }
+
+        UnityEngine.Object[] allObjects = UnityEngine.Object.FindObjectsOfType<GameObject>();
+
+        foreach (var obj in allObjects) {
+            GameObject gameObject = obj as GameObject;
+            if (gameObject != null) {
+                SkinnedMeshRenderer smr = gameObject.GetComponent<SkinnedMeshRenderer>();
+                if (smr != null) {
+                    Material[] newMaterials = new Material[smr.sharedMaterials.Length];
+                    for (int i = 0; i < smr.sharedMaterials.Length; i++) {
+                        Material originalMat = smr.sharedMaterials[i];
+                        if (originalMat == null) {
+                            Debug.LogWarning($"GameObject '{gameObject.name}'s source {i} is null.");
+                            newMaterials[i] = null;
+                            continue;
+                        }
+
+                        Material convertedMat = convertedMaterials.Find(m => m != null && m.name.Contains(originalMat.name + "_poi"));
+                        if (convertedMat == null) {
+                            Debug.LogWarning($"Cannot return GameObject '{gameObject.name}' -> Source{i}: '{originalMat.name}'");
+                        }
+
+                        newMaterials[i] = convertedMat ?? originalMat;
+                    }
+                    smr.sharedMaterials = newMaterials;
+                    Debug.Log("Updated materials for " + gameObject.name);
+                }
+            }
+        }
     }
 }
